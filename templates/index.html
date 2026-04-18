@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+    <title>Chat</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="app">
+    <div class="chat">
+        <div class="topbar">
+            <div class="avatar"></div>
+            <div class="info">
+                <div class="name">Assistente</div>
+                <div class="status">online</div>
+            </div>
+        </div>
+
+        <div id="messages" class="messages"></div>
+
+        <div class="input-area">
+            <input id="input" type="text" placeholder="Digite sua mensagem..." onkeydown="if(event.key==='Enter') sendMessage()">
+            <button onclick="sendMessage()">Enviar</button>
+        </div>
+    </div>
+</div>
+
+<script>
+async function sendMessage() {
+    const input = document.getElementById('input');
+    const text = input.value.trim();
+    if (!text) return;
+
+    addMessage(text, 'user');
+    input.value = '';
+
+    const res = await fetch('/process', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ text })
+    });
+
+    const data = await res.json();
+    addMessage(data.response, 'bot');
+}
+
+function addMessage(text, type) {
+    const container = document.getElementById('messages');
+
+    const msg = document.createElement('div');
+    msg.className = `msg ${type}`;
+    msg.innerText = text;
+
+    container.appendChild(msg);
+    container.scrollTop = container.scrollHeight;
+}
+</script>
+
+</body>
+</html>
