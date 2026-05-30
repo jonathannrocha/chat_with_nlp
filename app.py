@@ -1,10 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 from models import NLP
 
-
 chat = NLP()
-
-chat.treinar("https://en.wikipedia.org/wiki/Natural_language_processing")
 
 app = Flask(__name__)
 

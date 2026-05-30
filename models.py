@@ -1,79 +1,357 @@
 import spacy
-import en_core_web_sm
 import random
+import re
 import nltk
+import unicodedata
+
 from goose3 import Goose
+from textblob import TextBlob
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-
+from langdetect import detect
 
 
 class NLP:
     def __init__(self):
-        self.original_sentences = ""
-        self.nlp = spacy.load('en_core_web_sm')
+        self.sentences = {
+            "en": [],
+            "pt": []
+        }
 
-    def treinar( self, url): 
-        nltk.download('punkt_tab')
-        g=Goose()
-        article=g.extract(url)
-        self.original_sentences = [sentence for sentence in nltk.sent_tokenize(article.cleaned_text)]
+        self.last_response = ""
 
-    def welcome_message(self, text):
-        welcome_words_input = ['hey','hello','hi', 'thank', 'by', 'how are you?'] 
-        welcome_words_output = ['hey','hello', 'welcome', "I'm fine and you?", "Good by!"] 
-        for word in text.split():
-            if word.lower() in welcome_words_input: 
-                return random.choice(welcome_words_output) 
-            else:
-                pass
+        self.random_responses = {
+            "pt": [
+                "Interessante.",
+                "Pode explicar melhor?",
+                "Curioso isso.",
+                "Entendi.",
+                "Continue."
+            ],
+            "en": [
+                "Interesting.",
+                "Can you explain better?",
+                "Curious.",
+                "I see.",
+                "Continue."
+            ]
+        }
 
-    def preprocessing(self, sentence):
-        sentence = sentence.lower() #tudo minúsculas
+        self.nlp = {
+            "en": spacy.load("en_core_web_lg"),
+            "pt": spacy.load("pt_core_news_lg")
+        }
 
-        tokens = []
+        self.treinar(
+            "https://en.wikipedia.org/wiki/Death_Note",
+            "en"
+        )
 
-        tokens = [token.text for token in self.nlp(sentence) if not (token.is_stop or token.like_num or token.is_punct or token.is_space or len(token)==1)]
+        self.treinar(
+            "https://pt.wikipedia.org/wiki/Death_Note",
+            "pt"
+        )
 
-        tokens=' '.join([element for element in tokens])
-        return tokens
+    def clean_raw_text(self, text):
+        text = re.sub(r"\[\d+\]", "", text)
+        text = re.sub(r"\[[a-zA-Z]+\]", "", text)
+        text = re.sub(r"==.*?==", "", text)
+        text = re.sub(r"http\S+|www\S+", "", text)
 
-    def answer(self, user_text, threshold = 0.05):
-        welcome_text = self.welcome_message( user_text)
-        chatbot_answer = ''
-        print( f"user { user_text}") 
+        text = text.lower()
 
-        if welcome_text:
-            chatbot_answer = welcome_text
-            print( f"resposta:: { user_text}") 
+        text = unicodedata.normalize("NFKD", text)
+        text = text.encode("ascii", "ignore").decode("utf-8")
+
+        text = re.sub(r"[^a-z0-9\s]", " ", text)
+        text = re.sub(r"\s+", " ", text)
+
+        return text.strip()
+
+    def treinar(self, url, lang):
+        g = Goose()
+
+        article = g.extract(url=url)
+
+        original_text = article.cleaned_text
+
+        nltk_lang = "portuguese" if lang == "pt" else "english"
+
+        raw_sentences = nltk.sent_tokenize(
+            original_text,
+            language=nltk_lang
+        )
+
+        processed = []
+
+        for sentence in raw_sentences:
+            clean_sentence = self.clean_raw_text(sentence)
+
+            if len(clean_sentence.split()) >= 4:
+                processed.append(sentence.strip())
+
+        self.sentences[lang].extend(processed)
+
+    def detect_language(self, text):
+        try:
+            if len(text.strip()) < 4:
+                return "pt"
+
+            lang = detect(text)
+
+            return lang if lang in ["en", "pt"] else "pt"
+
+        except:
+            return "pt"
+
+    def welcome_message(self, text, lang):
+        text = text.lower()
+
+        if lang == "pt":
+            inputs = {
+                "oi",
+                "olá",
+                "e ai",
+                "bom dia",
+                "boa tarde",
+                "boa noite",
+                "tudo bem"
+            }
+
+            outputs = [
+                "Oi",
+                "Olá",
+                "Tudo bem?",
+                "Como posso te ajudar?",
+                "Fala aí"
+            ]
+
         else:
-            cleaned_sentences = []
+            inputs = {
+                "hi",
+                "hello",
+                "hey",
+                "how are you",
+                "good morning",
+                "good evening"
+            }
 
-            for sentence in self.original_sentences:
-                cleaned_sentences.append(self.preprocessing(sentence))
+            outputs = [
+                "Hi",
+                "Hello",
+                "How can I help you?",
+                "Hey there"
+            ]
 
-            user_text = self.preprocessing(user_text)
+        for phrase in inputs:
+            if phrase in text:
+                return random.choice(outputs)
 
-            cleaned_sentences.append(user_text)
+        return None
 
-            tfidf = TfidfVectorizer()
-            x_sentences = tfidf.fit_transform(cleaned_sentences)
+    def preprocessing(self, sentence, lang):
+        sentence = self.clean_raw_text(sentence)
 
+        nlp = self.nlp[lang]
 
-            similarity = cosine_similarity(x_sentences[-1], x_sentences)
+        doc = nlp(sentence)
 
-            sentence_index = similarity.argsort()[0][-2] #a segunda maior correspondência
+        tokens = [
+            token.lemma_
+            for token in doc
+            if not (
+                token.is_stop
+                or token.is_punct
+                or token.is_space
+                or token.like_num
+                or len(token.text) <= 1
+            )
+        ]
 
-            
+        return " ".join(tokens)
 
-            
-            if similarity[0][sentence_index] < threshold:
-                chatbot_answer += 'sorry, no answer was found'
+    def humor(self, text, lang):
+        try:
+            polarity = TextBlob(text).sentiment.polarity
 
+            if polarity > 0.3:
+                return (
+                    "Parece algo positivo."
+                    if lang == "pt"
+                    else "Sounds positive."
+                )
+
+            elif polarity < -0.3:
+                return (
+                    "Isso parece meio negativo."
+                    if lang == "pt"
+                    else "That sounds a bit negative."
+                )
+
+            return (
+                "Tom neutro."
+                if lang == "pt"
+                else "Neutral tone."
+            )
+
+        except:
+            return ""
+
+    def feedback_analysis(self, text, lang):
+        text = self.clean_raw_text(text)
+
+        positive_pt = {
+            "sim",
+            "faz sentido",
+            "entendi",
+            "correto",
+            "ok",
+            "boa",
+            "certo"
+        }
+
+        negative_pt = {
+            "nao",
+            "errado",
+            "confuso",
+            "nao entendi",
+            "sem sentido"
+        }
+
+        positive_en = {
+            "yes",
+            "correct",
+            "makes sense",
+            "good",
+            "right",
+            "understood"
+        }
+
+        negative_en = {
+            "no",
+            "wrong",
+            "confusing",
+            "doesnt make sense"
+        }
+
+        if lang == "pt":
+            if any(p in text for p in positive_pt):
+                return "Ótimo, então a resposta parece consistente."
+
+            if any(n in text for n in negative_pt):
+                return "Entendi. Vou tentar melhorar a resposta."
+
+        else:
+            if any(p in text for p in positive_en):
+                return "Great, the answer seems consistent."
+
+            if any(n in text for n in negative_en):
+                return "Understood. I'll try to improve the answer."
+
+        return (
+            "Não consegui interpretar totalmente sua resposta."
+            if lang == "pt"
+            else "I could not fully understand your feedback."
+        )
+
+    def keyword_fallback(self, user_clean, sentences, lang):
+        user_words = set(user_clean.split())
+
+        matches = []
+
+        for sentence in sentences:
+            clean_sentence = self.preprocessing(sentence, lang)
+
+            score = sum(
+                1 for word in user_words
+                if word in clean_sentence
+            )
+
+            if score > 0:
+                matches.append((sentence, score))
+
+        if matches:
+            matches.sort(key=lambda x: x[1], reverse=True)
+            return matches[0][0]
+
+        return None
+
+    def answer(self, user_text, threshold=0.02):
+        lang = self.detect_language(user_text)
+
+        if self.last_response:
+            feedback = self.feedback_analysis(user_text, lang)
+            self.last_response = ""
+            return feedback
+
+        welcome = self.welcome_message(user_text, lang)
+
+        if welcome:
+            return welcome
+
+        sentences = self.sentences[lang]
+
+        if not sentences:
+            return (
+                "Desculpa, não tenho dados suficientes."
+                if lang == "pt"
+                else "Sorry, I don't have enough data."
+            )
+
+        cleaned_sentences = [
+            self.preprocessing(sentence, lang)
+            for sentence in sentences
+        ]
+
+        user_clean = self.preprocessing(user_text, lang)
+
+        tfidf = TfidfVectorizer(
+            ngram_range=(1, 2),
+            stop_words="english" if lang == "en" else None
+        )
+
+        x = tfidf.fit_transform(
+            cleaned_sentences + [user_clean]
+        )
+
+        similarity = cosine_similarity(
+            x[-1],
+            x[:-1]
+        )[0]
+
+        best_idx = similarity.argmax()
+
+        best_score = similarity[best_idx]
+
+        if best_score < threshold:
+            fallback = self.keyword_fallback(
+                user_clean,
+                sentences,
+                lang
+            )
+
+            if fallback:
+                response = fallback
             else:
-                chatbot_answer += self.original_sentences[sentence_index]
+                return random.choice(
+                    self.random_responses[lang]
+                )
+        else:
+            response = sentences[best_idx]
 
-            print( f"resposta:: { user_text}") 
+        mood = self.humor(response, lang)
 
-        return chatbot_answer
+        self.last_response = response
 
+        if lang == "pt":
+            return (
+                f"{response}\n\n"
+                f"{mood}\n\n"
+                f"Isso faz sentido para você?"
+            )
+
+        return (
+            f"{response}\n\n"
+            f"{mood}\n\n"
+            f"Does that make sense to you?"
+        )
